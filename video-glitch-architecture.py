@@ -27,10 +27,27 @@ class GlitchEffect(abc.ABC):
         self.params = {name: details["default"] for name, details in self.parameters.items()}
     
     def set_param(self, name: str, value: Any) -> None:
-        """Set a parameter value"""
+        """Set a parameter value with type safety"""
         if name in self.params:
-            self.params[name] = value
-    
+            expected_type = self.parameters[name]["type"]
+
+            try:
+                # Auto-cast value to expected type
+                if expected_type == int:
+                    self.params[name] = int(value)
+                elif expected_type == float:
+                    self.params[name] = float(value)
+                elif expected_type == bool:
+                    self.params[name] = bool(value)
+                elif expected_type == str:
+                    self.params[name] = str(value)
+                elif expected_type == "choice":
+                    self.params[name] = str(value)  # choices are string values
+                else:
+                    self.params[name] = value  # fallback
+            except Exception as e:
+                print(f"[WARNING] Failed to cast {name} to {expected_type}: {e}")
+        
     def get_params(self) -> Dict[str, Any]:
         """Get all parameters"""
         return self.params
@@ -289,72 +306,73 @@ class VideoGlitchGUI:
         self._build_ui()
         
     def _build_ui(self):
-        # Main layout
+        # Main layout using PanedWindow
         main_frame = ttk.Frame(self.root, padding=10)
         main_frame.pack(fill=tk.BOTH, expand=True)
-        
-        # Video controls
-        controls_frame = ttk.LabelFrame(main_frame, text="Video Controls", padding=5)
+
+        paned = ttk.Panedwindow(main_frame, orient=tk.HORIZONTAL)
+        paned.pack(fill=tk.BOTH, expand=True)
+
+        # === Left side: video controls and preview ===
+        left_frame = ttk.Frame(paned)
+        paned.add(left_frame, weight=3)
+
+        controls_frame = ttk.LabelFrame(left_frame, text="Video Controls", padding=5)
         controls_frame.pack(fill=tk.X, pady=5)
-        
+
         ttk.Button(controls_frame, text="Open Video", command=self._open_video).pack(side=tk.LEFT, padx=5)
         ttk.Button(controls_frame, text="Export Processed Video", command=self._export_video).pack(side=tk.LEFT, padx=5)
-        
-        # Preview frame
-        preview_frame = ttk.LabelFrame(main_frame, text="Preview", padding=5)
+
+        preview_frame = ttk.LabelFrame(left_frame, text="Preview", padding=5)
         preview_frame.pack(fill=tk.BOTH, expand=True, pady=5)
-        
+
         self.canvas = tk.Canvas(preview_frame, bg="black")
         self.canvas.pack(fill=tk.BOTH, expand=True)
-        
-        # Frame slider
+
         slider_frame = ttk.Frame(preview_frame)
         slider_frame.pack(fill=tk.X, pady=5)
-        
+
         ttk.Label(slider_frame, text="Frame:").pack(side=tk.LEFT)
         self.frame_slider = ttk.Scale(slider_frame, from_=0, to=100, orient=tk.HORIZONTAL, 
-                                     command=self._on_frame_slider_change)
+                                      command=self._on_frame_slider_change)
         self.frame_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
         self.frame_label = ttk.Label(slider_frame, text="0 / 0")
         self.frame_label.pack(side=tk.LEFT)
-        
-        # Effects panel
-        effects_frame = ttk.LabelFrame(main_frame, text="Effects Chain", padding=5)
-        effects_frame.pack(fill=tk.BOTH, pady=5)
-        
-        # Effects list
+
+        # === Right side: effects chain and parameters ===
+        right_frame = ttk.Frame(paned)
+        paned.add(right_frame, weight=2)
+
+        effects_frame = ttk.LabelFrame(right_frame, text="Effects Chain", padding=5)
+        effects_frame.pack(fill=tk.BOTH, pady=5, expand=True)
+
         effects_list_frame = ttk.Frame(effects_frame)
         effects_list_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        
+
         self.effects_list = ttk.Treeview(effects_list_frame, columns=("name",), show="headings")
         self.effects_list.heading("name", text="Effect")
         self.effects_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        
-        effects_list_scroll = ttk.Scrollbar(effects_list_frame, command=self.effects_list.yview)
-        effects_list_scroll.pack(side=tk.RIGHT, fill=tk.Y)
-        self.effects_list.configure(yscrollcommand=effects_list_scroll.set)
-        
+
+        effects_scroll = ttk.Scrollbar(effects_list_frame, command=self.effects_list.yview)
+        effects_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.effects_list.configure(yscrollcommand=effects_scroll.set)
         self.effects_list.bind("<<TreeviewSelect>>", self._on_effect_selected)
-        
-        # Effects buttons
+
         effects_buttons_frame = ttk.Frame(effects_frame)
         effects_buttons_frame.pack(side=tk.LEFT, fill=tk.Y, padx=5)
-        
+
         ttk.Button(effects_buttons_frame, text="Add", command=self._add_effect).pack(fill=tk.X, pady=2)
         ttk.Button(effects_buttons_frame, text="Remove", command=self._remove_effect).pack(fill=tk.X, pady=2)
         ttk.Button(effects_buttons_frame, text="Move Up", command=self._move_effect_up).pack(fill=tk.X, pady=2)
         ttk.Button(effects_buttons_frame, text="Move Down", command=self._move_effect_down).pack(fill=tk.X, pady=2)
-        
-        # Parameters panel
-        self.params_frame = ttk.LabelFrame(main_frame, text="Effect Parameters", padding=5)
-        self.params_frame.pack(fill=tk.X, pady=5)
-        
-        # Status bar
-        self.status_var = tk.StringVar()
-        self.status_var.set("Ready")
+
+        self.params_frame = ttk.LabelFrame(right_frame, text="Effect Parameters", padding=5)
+        self.params_frame.pack(fill=tk.BOTH, expand=False, pady=5)
+
+        self.status_var = tk.StringVar(value="Ready")
         status_bar = ttk.Label(main_frame, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W)
-        status_bar.pack(fill=tk.X, pady=5)
-    
+        status_bar.pack(fill=tk.X, pady=(5, 0))
+
     def _open_video(self):
         """Open a video file"""
         file_path = filedialog.askopenfilename(
@@ -564,88 +582,105 @@ class VideoGlitchGUI:
     def _on_effect_selected(self, event):
         """Handle effect selection"""
         selection = self.effects_list.selection()
-        if selection:
-            # Clear current parameters UI
-            for widget in self.params_frame.winfo_children():
-                widget.destroy()
-            
-            # Get selected effect
-            index = self.effects_list.index(selection[0])
-            effect = self.processor.effect_chain.effects[index]
-            
-            # Create parameters UI
-            for param_name, param_details in effect.parameters.items():
-                frame = ttk.Frame(self.params_frame)
-                frame.pack(fill=tk.X, pady=2)
-                
-                ttk.Label(frame, text=f"{param_name}:").pack(side=tk.LEFT)
-                
-                param_type = param_details["type"]
-                param_value = effect.params[param_name]
-                
-                if param_type == int or param_type == float:
-                    # Create slider
-                    var = tk.DoubleVar(value=param_value)
-                    
-                    slider = ttk.Scale(
-                        frame, 
-                        from_=param_details["min"], 
-                        to=param_details["max"],
-                        orient=tk.HORIZONTAL,
-                        variable=var
-                    )
-                    slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-                    
-                    # Value label
-                    value_label = ttk.Label(frame, width=5)
-                    value_label.pack(side=tk.LEFT)
-                    
-                    def update_param(name=param_name, var=var, label=value_label, effect=effect, param_type=param_type):
-                        value = var.get()
-                        if param_type == int:
-                            value = int(value)
-                        effect.set_param(name, value)
-                        label.config(text=str(value))
-                        self._update_preview()
-                    
-                    # Initial update
-                    update_param()
-                    
-                    # Bind to variable changes
-                    var.trace_add("write", lambda *args, update=update_param: update())
-                    
-                elif param_type == bool:
-                    # Create checkbox
-                    var = tk.BooleanVar(value=param_value)
-                    
-                    checkbox = ttk.Checkbutton(
-                        frame,
-                        variable=var,
-                        onvalue=True,
-                        offvalue=False
-                    )
-                    checkbox.pack(side=tk.LEFT, padx=5)
-                    
-                    def update_param(name=param_name, var=var, effect=effect):
-                        effect.set_param(name, var.get())
-                        self._update_preview()
-                    
-                    # Bind to variable changes
-                    var.trace_add("write", lambda *args, update=update_param: update())
-                    
-                elif param_type == str:
-                    # Create text entry
-                    var = tk.StringVar(value=param_value)
-                    
-                    entry = ttk.Entry(frame, textvariable=var)
-                    entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-                    
-                    def update_param(name=param_name, var=var, effect=effect):
-                        effect.set_param(name, var.get())
-                        self._update_preview()
-                    
-                    # Bind to Enter key
-                    entry.bind("<Return>", lambda event, update=update_param: update())
+        if not selection:
+            return
+
+        # Clear current parameters UI
+        for widget in self.params_frame.winfo_children():
+            widget.destroy()
+
+        # Get selected effect
+        index = self.effects_list.index(selection[0])
+        effect = self.processor.effect_chain.effects[index]
+
+        # Create parameters UI
+        for param_name, param_details in effect.parameters.items():
+            frame = ttk.Frame(self.params_frame)
+            frame.pack(fill=tk.X, pady=4)
+
+            ttk.Label(frame, text=f"{param_name}:").pack(side=tk.LEFT)
+
+            param_type = param_details["type"]
+            param_value = effect.params[param_name]
+            default_value = param_details.get("default")
+
+            # Display value label
+            value_var = tk.StringVar(value=str(param_value))
+            value_label = ttk.Label(frame, textvariable=value_var, width=6)
+            value_label.pack(side=tk.RIGHT, padx=(5, 0))
+
+            def update_label(val): value_var.set(str(val))
+
+            # Reset button
+            def reset_param():
+                effect.set_param(param_name, default_value)
+                value_var.set(str(default_value))
+                self._update_preview()
+                self._on_effect_selected(None)  # Refresh controls
+
+            ttk.Button(frame, text="⟲", width=2, command=reset_param).pack(side=tk.RIGHT)
+
+            if param_type in [int, float]:
+                var = tk.DoubleVar(value=param_value)
+
+                slider = ttk.Scale(
+                    frame,
+                    from_=param_details["min"],
+                    to=param_details["max"],
+                    orient=tk.HORIZONTAL,
+                    variable=var
+                )
+                slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+
+                def update_param(*_, name=param_name, var=var):
+                    val = var.get()
+                    if param_type == int:
+                        val = int(val)
+                    effect.set_param(name, val)
+                    update_label(val)
+                    self._update_preview()
+
+                var.trace_add("write", update_param)
+
+            elif param_type == bool:
+                var = tk.BooleanVar(value=param_value)
+
+                checkbox = ttk.Checkbutton(frame, variable=var)
+                checkbox.pack(side=tk.LEFT, padx=5)
+
+                def update_param(*_, name=param_name, var=var):
+                    effect.set_param(name, var.get())
+                    update_label(var.get())
+                    self._update_preview()
+
+                var.trace_add("write", update_param)
+
+            elif param_type == str:
+                var = tk.StringVar(value=param_value)
+
+                entry = ttk.Entry(frame, textvariable=var)
+                entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+
+                def update_param(*_, name=param_name, var=var):
+                    effect.set_param(name, var.get())
+                    update_label(var.get())
+                    self._update_preview()
+
+                var.trace_add("write", update_param)
+
+            elif param_type == "choice":
+                var = tk.StringVar(value=param_value)
+                combobox = ttk.Combobox(frame, textvariable=var, values=param_details["options"], state="readonly")
+                combobox.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+
+                def update_param(name=param_name, var=var):
+                    val = var.get()
+                    effect.set_param(name, val)
+                    update_label(val)
+                    self._update_preview()
+
+                combobox.bind("<<ComboboxSelected>>", lambda e: update_param())
+
 
 
 # ===== Main Application =====
