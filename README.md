@@ -100,6 +100,10 @@ class MyEffect(GlitchEffect):
         return frame
 ```
 
+## Documentation
+
+For detailed information about creating plugins, see the [Plugin Development Guide](PLUGIN_GUIDE.md).
+
 ## Performance Optimizations
 
 - Multi-threaded video processing
@@ -263,6 +267,5 @@ This architecture gives you the flexibility to start simple and grow the applica
 
 …
 …
-
 
 
