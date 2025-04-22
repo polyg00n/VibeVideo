@@ -465,9 +465,10 @@ class VideoGlitchGUI:
                 self.preview_frame = ImageTk.PhotoImage(img)
                 
                 # Update canvas
-                self.canvas.config(width=img.width, height=img.height)
-                self.canvas.create_image(0, 0, anchor=tk.NW, image=self.preview_frame)
-                
+
+                self.canvas.delete("all")  # Clear previous image
+                self.canvas.create_image(canvas_width // 2, canvas_height // 2, anchor=tk.CENTER, image=self.preview_frame)
+
                 # Update frame label
                 self.frame_label.config(text=f"{self.current_frame_index + 1} / {self.processor.frame_count}")
     
