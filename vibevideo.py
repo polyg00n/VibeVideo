@@ -570,6 +570,9 @@ class VideoGlitchGUI:
                 
                 # Update frame label
                 self.frame_label.config(text=f"{self.current_frame_index + 1} / {self.processor.frame_count}")
+                
+                # Force UI update
+                self.root.update_idletasks()
         except Exception as e:
             print(f"Preview update error: {e}")
             self._stop_playback()

@@ -91,7 +91,7 @@ class BlockShuffleEffect(GlitchEffect):
     name = "Block Shuffle"
     description = "Divide image into blocks and shuffle them"
     parameters = {
-        "block_size": {"type": int, "min": 8, "max": 64, "default": 16},
+        "block_size": {"type": int, "min": 8, "max": 128, "default": 16},
         "shuffle_percentage": {"type": int, "min": 0, "max": 100, "default": 50},
         "preserve_regions": {"type": bool, "default": False}
     }

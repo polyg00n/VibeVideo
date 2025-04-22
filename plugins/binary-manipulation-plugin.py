@@ -17,150 +17,104 @@ class ChunkManipulationEffect(GlitchEffect):
     """Manipulate video file chunks directly"""
     
     name = "Chunk Manipulation"
-    description = "Manipulate raw binary chunks of the video file"
+    description = "Drastically manipulate raw binary chunks of the video file"
     parameters = {
-        "chunk_size": {"type": int, "min": 512, "max": 8192, "default": 2048},
-        "manipulation_type": {"type": int, "min": 0, "max": 3, "default": 0},  # 0: swap, 1: repeat, 2: remove, 3: reverse
-        "intensity": {"type": float, "min": 0.0, "max": 1.0, "default": 0.2},
-        "preserve_header": {"type": bool, "default": True}
+        "chunk_size": {"type": int, "min": 16, "max": 256, "default": 64},
+        "manipulation_type": {"type": "choice", 
+                            "options": ["Swap", "Corrupt", "Shift"],
+                            "default": "Swap"},
+        "corruption_strength": {"type": float, "min": 0.0, "max": 1.0, "default": 0.5},
+        "shift_amount": {"type": int, "min": 1, "max": 7, "default": 4},
+        "frame_skip": {"type": int, "min": 0, "max": 5, "default": 0},
+        "frame_randomness": {"type": float, "min": 0.0, "max": 1.0, "default": 0.5}
     }
     
     def __init__(self):
         super().__init__()
-        self.temp_file = None
-        self.temp_filename = None
-        self.cap = None
-    
-    def _manipulate_file(self, original_file: str) -> Optional[str]:
-        """Create a manipulated copy of the original file"""
-        # Create a temporary file
-        temp_fd, temp_path = tempfile.mkstemp(suffix='.mp4')
-        os.close(temp_fd)
-        
-        try:
-            # Read the original file in binary mode
-            with open(original_file, 'rb') as f:
-                data = bytearray(f.read())
-            
-            chunk_size = self.params["chunk_size"]
-            manip_type = self.params["manipulation_type"]
-            intensity = self.params["intensity"]
-            preserve_header = self.params["preserve_header"]
-            
-            # Determine how many chunks to process
-            num_chunks = len(data) // chunk_size
-            
-            # Skip header if preserve_header is True (usually first chunk)
-            start_chunk = 1 if preserve_header else 0
-            
-            # Calculate how many chunks to manipulate based on intensity
-            num_to_manipulate = int(num_chunks * intensity)
-            
-            # Select random chunks to manipulate
-            chunks_to_manipulate = random.sample(range(start_chunk, num_chunks), min(num_to_manipulate, num_chunks - start_chunk))
-            
-            # Perform manipulation
-            if manip_type == 0:  # Swap chunks
-                for i in range(0, len(chunks_to_manipulate) - 1, 2):
-                    if i + 1 < len(chunks_to_manipulate):
-                        chunk1_idx = chunks_to_manipulate[i]
-                        chunk2_idx = chunks_to_manipulate[i + 1]
-                        
-                        chunk1_start = chunk1_idx * chunk_size
-                        chunk1_end = (chunk1_idx + 1) * chunk_size
-                        chunk2_start = chunk2_idx * chunk_size
-                        chunk2_end = (chunk2_idx + 1) * chunk_size
-                        
-                        # Swap chunks
-                        temp = data[chunk1_start:chunk1_end]
-                        data[chunk1_start:chunk1_end] = data[chunk2_start:chunk2_end]
-                        data[chunk2_start:chunk2_end] = temp
-            
-            elif manip_type == 1:  # Repeat chunks
-                for chunk_idx in chunks_to_manipulate:
-                    chunk_start = chunk_idx * chunk_size
-                    chunk_end = (chunk_idx + 1) * chunk_size
-                    
-                    # Repeat the chunk (replace next chunk with this one)
-                    if chunk_idx < num_chunks - 1:
-                        next_start = (chunk_idx + 1) * chunk_size
-                        next_end = (chunk_idx + 2) * chunk_size
-                        data[next_start:next_end] = data[chunk_start:chunk_end]
-            
-            elif manip_type == 2:  # Remove chunks
-                # We'll create a new bytearray excluding chunks to remove
-                new_data = bytearray()
-                chunks_to_remove = set(chunks_to_manipulate)
-                
-                for i in range(num_chunks):
-                    if i not in chunks_to_remove:
-                        chunk_start = i * chunk_size
-                        chunk_end = (i + 1) * chunk_size
-                        new_data.extend(data[chunk_start:chunk_end])
-                
-                # Add any remaining data
-                new_data.extend(data[num_chunks * chunk_size:])
-                data = new_data
-            
-            elif manip_type == 3:  # Reverse chunks
-                for chunk_idx in chunks_to_manipulate:
-                    chunk_start = chunk_idx * chunk_size
-                    chunk_end = (chunk_idx + 1) * chunk_size
-                    
-                    # Reverse the bytes in the chunk
-                    chunk = data[chunk_start:chunk_end]
-                    data[chunk_start:chunk_end] = chunk[::-1]
-            
-            # Write to temporary file
-            with open(temp_path, 'wb') as f:
-                f.write(data)
-            
-            return temp_path
-        
-        except Exception as e:
-            print(f"Error manipulating file: {e}")
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
-            return None
+        self._frame_count = 0
     
     def process_frame(self, frame: np.ndarray) -> np.ndarray:
-        # This effect doesn't process individual frames directly
-        # Instead, it processes the entire file
-        # For demonstration, we'll just return the frame
-        return frame
-    
-    def pre_process_video(self, original_file: str) -> Optional[Tuple[cv2.VideoCapture, str]]:
-        """Pre-process the video file by manipulating its binary data"""
-        # Clean up previous temp files if they exist
-        if self.temp_filename and os.path.exists(self.temp_filename):
-            try:
-                os.remove(self.temp_filename)
-            except:
-                pass
+        """Process individual frames with chunk manipulation"""
+        self._frame_count += 1
         
-        # Create new manipulated file
-        self.temp_filename = self._manipulate_file(original_file)
+        # Calculate random frame skip
+        base_skip = self.params["frame_skip"]
+        randomness = self.params["frame_randomness"]
+        random_skip = int(base_skip * (1 + random.uniform(-randomness, randomness)))
+        random_skip = max(0, random_skip)  # Ensure we don't get negative skips
         
-        if self.temp_filename:
-            # Open the manipulated file with OpenCV
-            self.cap = cv2.VideoCapture(self.temp_filename)
-            if self.cap.isOpened():
-                return self.cap, self.temp_filename
+        # Skip frames if needed
+        if self._frame_count % (random_skip + 1) != 0:
+            return frame
         
-        return None
-    
-    def cleanup(self):
-        """Clean up resources"""
-        if self.cap:
-            self.cap.release()
-            self.cap = None
+        # Convert frame to bytes
+        frame_bytes = frame.tobytes()
+        data = bytearray(frame_bytes)
         
-        if self.temp_filename and os.path.exists(self.temp_filename):
-            try:
-                os.remove(self.temp_filename)
-                self.temp_filename = None
-            except:
-                pass
+        # Get parameters
+        chunk_size = self.params["chunk_size"]
+        manip_type = self.params["manipulation_type"]
+        corruption_strength = self.params["corruption_strength"]
+        shift_amount = self.params["shift_amount"]
+        
+        # Calculate number of chunks
+        num_chunks = len(data) // chunk_size
+        if num_chunks == 0:
+            return frame
+        
+        # Calculate how many chunks to manipulate
+        num_to_manipulate = int(num_chunks * 0.5)  # Fixed at 50% of chunks
+        if num_to_manipulate == 0:
+            return frame
+        
+        # Select random chunks to manipulate
+        chunks_to_manipulate = random.sample(range(num_chunks), min(num_to_manipulate, num_chunks))
+        
+        if manip_type == "Swap":
+            # Simple swap of adjacent chunks
+            for i in range(0, len(chunks_to_manipulate) - 1, 2):
+                if i + 1 < len(chunks_to_manipulate):
+                    chunk1_idx = chunks_to_manipulate[i]
+                    chunk2_idx = chunks_to_manipulate[i + 1]
+                    
+                    chunk1_start = chunk1_idx * chunk_size
+                    chunk1_end = (chunk1_idx + 1) * chunk_size
+                    chunk2_start = chunk2_idx * chunk_size
+                    chunk2_end = (chunk2_idx + 1) * chunk_size
+                    
+                    # Swap chunks
+                    temp = data[chunk1_start:chunk1_end]
+                    data[chunk1_start:chunk1_end] = data[chunk2_start:chunk2_end]
+                    data[chunk2_start:chunk2_end] = temp
+        
+        elif manip_type == "Corrupt":
+            # Simple corruption
+            for chunk_idx in chunks_to_manipulate:
+                chunk_start = chunk_idx * chunk_size
+                chunk_end = (chunk_idx + 1) * chunk_size
+                
+                # Corrupt entire chunks
+                if random.random() < corruption_strength:
+                    data[chunk_start:chunk_end] = bytes([random.randint(0, 255) for _ in range(chunk_size)])
+        
+        elif manip_type == "Shift":
+            # Simple bit shifting
+            for chunk_idx in chunks_to_manipulate:
+                chunk_start = chunk_idx * chunk_size
+                chunk_end = (chunk_idx + 1) * chunk_size
+                
+                # Shift bits in chunk
+                chunk = bytearray(data[chunk_start:chunk_end])
+                for i in range(len(chunk)):
+                    chunk[i] = ((chunk[i] << shift_amount) | (chunk[i] >> (8 - shift_amount))) & 0xFF
+                data[chunk_start:chunk_end] = chunk
+        
+        # Convert back to numpy array
+        try:
+            result = np.frombuffer(data, dtype=frame.dtype).reshape(frame.shape)
+            return result
+        except:
+            return frame
 
 
 class IDCTCoefficientEffect(GlitchEffect):
@@ -226,52 +180,76 @@ class BitCorruptionEffect(GlitchEffect):
     """Corrupt specific bits in the frame"""
     
     name = "Bit Corruption"
-    description = "Flip specific bits in the image data"
+    description = "Drastically reduce bit depth and corrupt image data"
     parameters = {
-        "bit_position": {"type": int, "min": 0, "max": 7, "default": 4},  # Which bit to corrupt (0-7)
-        "probability": {"type": float, "min": 0.0, "max": 1.0, "default": 0.1},
+        "bit_depth": {"type": int, "min": 1, "max": 8, "default": 4},  # Reduce to N bits per channel
+        "corruption_strength": {"type": float, "min": 0.0, "max": 1.0, "default": 0.5},
         "channel_mask": {"type": int, "min": 0, "max": 7, "default": 7},  # Bitmask: 1=B, 2=G, 4=R
-        "region_specific": {"type": bool, "default": False}
+        "noise_type": {"type": "choice", 
+                      "options": ["Random", "Pattern", "Block", "Scanline"],
+                      "default": "Random"},
+        "invert_colors": {"type": bool, "default": False}
     }
     
     def process_frame(self, frame: np.ndarray) -> np.ndarray:
         result = frame.copy()
         h, w = result.shape[:2]
         
-        bit_pos = self.params["bit_position"]
-        prob = self.params["probability"]
+        bit_depth = self.params["bit_depth"]
+        corruption_strength = self.params["corruption_strength"]
         channel_mask = self.params["channel_mask"]
-        region_specific = self.params["region_specific"]
+        noise_type = self.params["noise_type"]
+        invert_colors = self.params["invert_colors"]
         
-        # Create bit mask
-        bit_mask = 1 << bit_pos
+        # Calculate bit mask for depth reduction
+        bit_mask = (1 << bit_depth) - 1
+        shift = 8 - bit_depth
         
         # Process each channel if selected
         for c in range(3):
             if (channel_mask & (1 << c)) == 0:
                 continue  # Skip this channel
             
-            if region_specific:
-                # Corrupt specific regions
-                x_center = w // 2
-                y_center = h // 2
-                radius = min(w, h) // 4
-                
-                for i in range(h):
-                    for j in range(w):
-                        # Distance from center
-                        dist = np.sqrt((i - y_center)**2 + (j - x_center)**2)
-                        
-                        # Only corrupt within circle
-                        if dist < radius and random.random() < prob:
-                            # Flip the bit
-                            result[i,j,c] ^= bit_mask
-            else:
+            channel = result[:,:,c]
+            
+            # Reduce bit depth
+            channel = (channel >> shift) << shift
+            
+            # Add corruption based on noise type
+            if noise_type == "Random":
                 # Random corruption throughout the image
-                random_mask = np.random.random((h, w)) < prob
+                noise = np.random.random((h, w)) < corruption_strength
+                channel[noise] = np.random.randint(0, 256, size=np.sum(noise))
                 
-                # Apply the bit flip to selected pixels
-                result[:,:,c][random_mask] ^= bit_mask
+            elif noise_type == "Pattern":
+                # Create a repeating pattern
+                pattern_size = max(4, int(32 * (1 - corruption_strength)))
+                pattern = np.random.randint(0, 256, size=(pattern_size, pattern_size))
+                pattern = np.tile(pattern, (h//pattern_size + 1, w//pattern_size + 1))[:h, :w]
+                mask = np.random.random((h, w)) < corruption_strength
+                channel[mask] = pattern[mask]
+                
+            elif noise_type == "Block":
+                # Create blocky corruption
+                block_size = max(4, int(32 * (1 - corruption_strength)))
+                for y in range(0, h, block_size):
+                    for x in range(0, w, block_size):
+                        if np.random.random() < corruption_strength:
+                            block_value = np.random.randint(0, 256)
+                            channel[y:y+block_size, x:x+block_size] = block_value
+                            
+            elif noise_type == "Scanline":
+                # Create scanline corruption
+                for y in range(h):
+                    if np.random.random() < corruption_strength:
+                        channel[y,:] = np.random.randint(0, 256)
+            
+            # Apply channel back to result
+            result[:,:,c] = channel
+            
+            # Invert colors if enabled
+            if invert_colors:
+                result[:,:,c] = 255 - result[:,:,c]
         
         return result
 

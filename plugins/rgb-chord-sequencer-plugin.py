@@ -21,20 +21,22 @@ class RGBChordSequencerEffect(GlitchEffect):
     description = "Generate musical chords from RGB block data"
     parameters = {
         "horizontal_divisions": {
-            "type": "choice",
-            "options": ["4", "8", "16", "32"],
-            "default": "8"
+            "type": int,
+            "min": 4,
+            "max": 32,
+            "default": 4
         },
         "vertical_divisions": {
-            "type": "choice",
-            "options": ["4", "8", "16", "32"],
-            "default": "8"
+            "type": int,
+            "min": 4,
+            "max": 32,
+            "default": 4
         },
         "tempo": {"type": int, "min": 60, "max": 240, "default": 120},
         "volume": {"type": float, "min": 0.0, "max": 1.0, "default": 0.3},
         "note_duration": {"type": "choice", 
                          "options": ["1/4", "1/8", "1/16", "1/32"],
-                         "default": "1/8"},
+                         "default": "1/4"},
         "save_audio": {"type": bool, "default": False}
     }
 
@@ -62,6 +64,14 @@ class RGBChordSequencerEffect(GlitchEffect):
         # MIDI note numbers (C3 = MIDI note 48)
         self.base_midi_note = 48
 
+    def _regenerate_audio(self):
+        """Regenerate audio when parameters change"""
+        if self.current_frame is not None and self.params["save_audio"]:
+            try:
+                self.save_queue.put(True, block=False)
+            except queue.Full:
+                pass
+
     def set_param(self, name: str, value: Any) -> None:
         """Override set_param to handle parameter changes"""
         super().set_param(name, value)
@@ -70,6 +80,8 @@ class RGBChordSequencerEffect(GlitchEffect):
         if name in ["horizontal_divisions", "vertical_divisions"] and self.current_frame is not None:
             # Force redraw by processing current frame again
             self.process_frame(self.current_frame.copy())
+            # Regenerate audio if save_audio is enabled
+            self._regenerate_audio()
 
     def _get_midi_note(self, rgb_value, channel):
         """Convert RGB value to MIDI note number"""
@@ -132,9 +144,9 @@ class RGBChordSequencerEffect(GlitchEffect):
         """Convert frame into sequence of RGB blocks"""
         height, width = frame.shape[:2]
         
-        # Convert division strings to integers
-        h_div = int(self.params["horizontal_divisions"])
-        v_div = int(self.params["vertical_divisions"])
+        # Get division values directly as integers
+        h_div = self.params["horizontal_divisions"]
+        v_div = self.params["vertical_divisions"]
         
         blocks = []
         # Iterate through blocks in row-major order (left to right, top to bottom)
@@ -259,10 +271,6 @@ class RGBChordSequencerEffect(GlitchEffect):
         h_div = int(self.params["horizontal_divisions"])
         v_div = int(self.params["vertical_divisions"])
         
-        # Store current divisions for change detection
-        self._last_h_div = self.params["horizontal_divisions"]
-        self._last_v_div = self.params["vertical_divisions"]
-        
         # Create a copy of the frame for drawing
         overlay = frame.copy()
         
@@ -289,7 +297,7 @@ class RGBChordSequencerEffect(GlitchEffect):
                            cv2.FONT_HERSHEY_SIMPLEX, 
                            font_scale, (255, 255, 255), 1)
         
-        # Draw info
+        # Draw info - Use current parameter values directly
         cv2.putText(overlay, 
                    f"Tempo: {self.params['tempo']} BPM", 
                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
