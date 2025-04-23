@@ -390,24 +390,56 @@ class MainWindow:
             if param_type in [int, float]:
                 var = tk.DoubleVar(value=param_value)
 
-                slider = ttk.Scale(
-                    frame,
-                    from_=param_details.min,
-                    to=param_details.max,
-                    orient=tk.HORIZONTAL,
-                    variable=var
-                )
-                slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+                # Special handling for blend mode parameter
+                if param_name in ["rgb_blend_mode", "exclusion_blend_mode"]:
+                    # Create a frame for the slider and label
+                    slider_frame = ttk.Frame(frame)
+                    slider_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+                    
+                    # Create the slider
+                    slider = ttk.Scale(
+                        slider_frame,
+                        from_=param_details.min,
+                        to=param_details.max,
+                        orient=tk.HORIZONTAL,
+                        variable=var,
+                        command=lambda v, n=param_name, vv=var: self._on_blend_mode_change(n, vv)
+                    )
+                    slider.pack(side=tk.LEFT, fill=tk.X, expand=True)
+                    
+                    # Create a label to show the current blend mode name
+                    blend_mode_label = ttk.Label(slider_frame, text="")
+                    blend_mode_label.pack(side=tk.LEFT, padx=5)
+                    
+                    # Update the label with the current blend mode name
+                    def update_blend_mode_label():
+                        if hasattr(effect, 'BLEND_MODES'):
+                            mode_index = int(var.get())
+                            mode_name = effect.BLEND_MODES.get(mode_index, "Unknown")
+                            blend_mode_label.config(text=mode_name)
+                    
+                    update_blend_mode_label()
+                    var.trace_add("write", lambda *args: update_blend_mode_label())
+                else:
+                    # Regular slider for other numeric parameters
+                    slider = ttk.Scale(
+                        frame,
+                        from_=param_details.min,
+                        to=param_details.max,
+                        orient=tk.HORIZONTAL,
+                        variable=var
+                    )
+                    slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
 
-                def update_param(*_, name=param_name, var=var):
-                    val = var.get()
-                    if param_type == int:
-                        val = int(val)
-                    effect.set_param(name, val)
-                    update_label(val)
-                    self._update_preview()
+                    def update_param(*_, name=param_name, var=var):
+                        val = var.get()
+                        if param_type == int:
+                            val = int(val)
+                        effect.set_param(name, val)
+                        update_label(val)
+                        self._update_preview()
 
-                var.trace_add("write", update_param)
+                    var.trace_add("write", update_param)
 
             elif param_type == bool:
                 var = tk.BooleanVar(value=param_value)
@@ -447,6 +479,26 @@ class MainWindow:
                     self._update_preview()
 
                 combobox.bind("<<ComboboxSelected>>", lambda e: update_param())
+    
+    def _on_blend_mode_change(self, param_name: str, var: tk.DoubleVar):
+        """Handle blend mode slider changes"""
+        try:
+            # Get the effect that owns this parameter
+            selection = self.effects_list.selection()
+            if not selection:
+                return
+                
+            index = self.effects_list.index(selection[0])
+            effect = self.processor.effect_chain.effects[index]
+            
+            # Update the parameter
+            value = int(var.get())
+            effect.set_param(param_name, value)
+            
+            # Update the preview
+            self._update_preview()
+        except Exception as e:
+            print(f"Error updating blend mode: {e}")
     
     def _on_window_close(self):
         """Handle window closing"""

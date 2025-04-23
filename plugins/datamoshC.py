@@ -1,16 +1,13 @@
-"""
-Datamosh B - A different approach to datamoshing by manipulating frame data directly
-"""
 import numpy as np
-import cv2
-from __main__ import GlitchEffect
 from typing import Dict, Any, Optional
+from __main__ import GlitchEffect
+import cv2
 
-class DatamoshBPlugin(GlitchEffect):
-    """Creates a different style of datamoshing where moving areas retain structure while static areas get distorted"""
+class DatamoshCPlugin(GlitchEffect):
+    """Enhanced version of Datamosh B with color channel separation and motion trails"""
     
-    name = "Datamosh B"
-    description = "Creates a different style of datamoshing where moving areas retain structure while static areas get distorted"
+    name = "Datamosh C"
+    description = "Enhanced version with color channel separation and motion trails"
     
     def __init__(self):
         super().__init__()
@@ -40,40 +37,39 @@ class DatamoshBPlugin(GlitchEffect):
                 "default": 0.7,
                 "label": "Blend Strength"
             },
-            "blend_mode": {
-                "type": "choice",
-                "options": [
-                    "normal",      # Simple weighted average
-                    "multiply",    # Multiply pixel values
-                    "screen",      # Inverse of multiply
-                    "overlay",     # Combination of multiply and screen
-                    "hard_light",  # Similar to overlay but more intense
-                    "soft_light",  # Softer version of overlay
-                    "difference",  # Absolute difference between pixels
-                    "exclusion",   # Similar to difference but lower contrast
-                    "add",         # Simple addition
-                    "subtract"     # Simple subtraction
-                ],
-                "default": "normal",
-                "label": "Blend Mode"
+            "color_offset": {
+                "type": int,
+                "min": 0,
+                "max": 20,
+                "default": 5,
+                "label": "Color Offset"
             },
-            "blend_contrast": {
+            "trail_length": {
+                "type": int,
+                "min": 0,
+                "max": 10,
+                "default": 3,
+                "label": "Trail Length"
+            },
+            "trail_strength": {
                 "type": float,
-                "min": 0.5,
-                "max": 2.0,
-                "default": 1.0,
-                "label": "Blend Contrast"
+                "min": 0.0,
+                "max": 1.0,
+                "default": 0.3,
+                "label": "Trail Strength"
             }
         }
         
         # Initialize with default parameter values
         self.params = {name: details["default"] for name, details in self.parameters.items()}
         
-        # Store reference frames
+        # Store reference frames and motion history
         self.last_frame = None
         self.motion_mask = None
         self.distorted_frame = None
-
+        self.motion_history = []
+        self.max_history = 10  # Maximum number of frames to keep in history
+        
     def _calculate_motion_mask(self, current_frame: np.ndarray, last_frame: np.ndarray) -> np.ndarray:
         """Calculate a mask of moving areas in the frame"""
         # Convert to grayscale
@@ -94,59 +90,57 @@ class DatamoshBPlugin(GlitchEffect):
         
         return motion_mask
     
-    def _blend_images(self, img1: np.ndarray, img2: np.ndarray, alpha: float) -> np.ndarray:
-        """Apply different blend modes using NumPy operations"""
-        # Normalize images to float32 for calculations
-        img1 = img1.astype(np.float32) / 255.0
-        img2 = img2.astype(np.float32) / 255.0
+    def _apply_color_separation(self, frame: np.ndarray, motion_mask: np.ndarray) -> np.ndarray:
+        """Apply color channel separation based on motion"""
+        # Split into color channels
+        b, g, r = cv2.split(frame)
         
-        # Apply contrast adjustment
-        contrast = self.params["blend_contrast"]
-        img1 = (img1 - 0.5) * contrast + 0.5
-        img2 = (img2 - 0.5) * contrast + 0.5
+        # Calculate offsets based on motion
+        offset = self.params["color_offset"]
+        h, w = frame.shape[:2]
         
-        # Clip values to valid range
-        img1 = np.clip(img1, 0, 1)
-        img2 = np.clip(img2, 0, 1)
+        # Create offset versions of each channel
+        b_offset = np.roll(b, offset, axis=1)
+        g_offset = np.roll(g, -offset, axis=1)
+        r_offset = np.roll(r, offset//2, axis=0)
         
-        blend_mode = self.params["blend_mode"]
+        # Blend channels based on motion mask
+        b = (b * (1 - motion_mask) + b_offset * motion_mask).astype(np.uint8)
+        g = (g * (1 - motion_mask) + g_offset * motion_mask).astype(np.uint8)
+        r = (r * (1 - motion_mask) + r_offset * motion_mask).astype(np.uint8)
         
-        if blend_mode == "normal":
-            result = img1 * (1 - alpha) + img2 * alpha
-        elif blend_mode == "multiply":
-            result = img1 * img2
-        elif blend_mode == "screen":
-            result = 1 - (1 - img1) * (1 - img2)
-        elif blend_mode == "overlay":
-            mask = img1 > 0.5
-            result = np.where(mask,
-                            1 - 2 * (1 - img1) * (1 - img2),
-                            2 * img1 * img2)
-        elif blend_mode == "hard_light":
-            mask = img2 > 0.5
-            result = np.where(mask,
-                            1 - 2 * (1 - img1) * (1 - img2),
-                            2 * img1 * img2)
-        elif blend_mode == "soft_light":
-            result = np.where(img2 <= 0.5,
-                            img1 - (1 - 2 * img2) * img1 * (1 - img1),
-                            img1 + (2 * img2 - 1) * (np.sqrt(img1) - img1))
-        elif blend_mode == "difference":
-            result = np.abs(img1 - img2)
-        elif blend_mode == "exclusion":
-            result = img1 + img2 - 2 * img1 * img2
-        elif blend_mode == "add":
-            result = img1 + img2
-        elif blend_mode == "subtract":
-            result = img1 - img2
+        # Merge channels back together
+        return cv2.merge([b, g, r])
+    
+    def _apply_motion_trail(self, frame: np.ndarray, motion_mask: np.ndarray) -> np.ndarray:
+        """Apply motion trail effect"""
+        if not self.motion_history:
+            return frame
+            
+        result = frame.copy()
+        trail_strength = self.params["trail_strength"]
         
-        # Apply alpha blending to the result
-        if blend_mode != "normal":
-            result = img1 * (1 - alpha) + result * alpha
+        # Blend previous frames based on their age
+        for i, (hist_frame, hist_mask) in enumerate(self.motion_history):
+            # Calculate weight based on age (older frames have less influence)
+            weight = trail_strength * (1.0 - (i / len(self.motion_history)))
+            
+            # Only apply trail to areas that were moving
+            mask = hist_mask * weight
+            
+            # Create a 3D mask for each color channel
+            mask_3d = np.stack([mask] * 3, axis=2)
+            
+            # Create a temporary result for this blend
+            temp_result = result.copy()
+            
+            # Blend with current frame using the mask
+            result = np.where(mask_3d > 0,
+                            (temp_result * (1 - mask_3d) + hist_frame * mask_3d).astype(np.uint8),
+                            temp_result)
         
-        # Convert back to uint8
-        return (np.clip(result, 0, 1) * 255).astype(np.uint8)
-
+        return result
+    
     def _distort_static_areas(self, frame: np.ndarray, motion_mask: np.ndarray) -> np.ndarray:
         """Apply distortion to static areas of the frame"""
         # Create a distorted version of the frame
@@ -187,9 +181,9 @@ class DatamoshBPlugin(GlitchEffect):
                 dst_block = distorted[new_y_start:new_y_start+block_height, new_x_start:new_x_start+block_width]
                 
                 # Blend based on motion (less motion = more distortion)
-                alpha = float(1.0 - block_motion)
-                blended = self._blend_images(src_block, dst_block, alpha)
-                distorted[new_y_start:new_y_start+block_height, new_x_start:new_x_start+block_width] = blended
+                alpha = 1.0 - block_motion
+                distorted[new_y_start:new_y_start+block_height, new_x_start:new_x_start+block_width] = \
+                    cv2.addWeighted(dst_block, 1 - alpha, src_block, alpha, 0)
         
         return distorted
     
@@ -201,15 +195,28 @@ class DatamoshBPlugin(GlitchEffect):
         # Calculate motion mask
         motion_mask = self._calculate_motion_mask(frame, self.last_frame)
         
-        # Create distorted version of the frame
-        distorted = self._distort_static_areas(frame, motion_mask)
+        # Update motion history
+        self.motion_history.insert(0, (frame.copy(), motion_mask.copy()))
+        if len(self.motion_history) > self.params["trail_length"]:
+            self.motion_history.pop()
         
-        # Blend the original and distorted frames based on motion
-        # Moving areas (high motion) get more of the original frame
-        # Static areas (low motion) get more of the distorted frame
-        motion_mask_3d = np.stack([motion_mask] * 3, axis=2)
-        blend_strength = float(self.params["blend_strength"])
-        result = self._blend_images(frame, distorted, 1 - blend_strength)
+        # Apply color separation
+        frame_with_color = self._apply_color_separation(frame, motion_mask)
+        
+        # Create distorted version of the frame
+        distorted = self._distort_static_areas(frame_with_color, motion_mask)
+        
+        # Apply motion trail
+        result = self._apply_motion_trail(distorted, motion_mask)
+        
+        # Final blend
+        result = cv2.addWeighted(
+            frame_with_color, 
+            self.params["blend_strength"],
+            result,
+            1.0 - self.params["blend_strength"],
+            0
+        )
         
         # Store current frame for next iteration
         self.last_frame = frame.copy()

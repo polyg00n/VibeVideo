@@ -14,6 +14,7 @@ from typing import Dict, List, Any, Optional, Tuple, Type
 import threading
 from PIL import Image, ImageTk
 from plugins.rgb_chord_sequencer import RGBChordSequencerEffect
+import sys
 
 # ===== Base Effect Plugin System =====
 
@@ -28,9 +29,13 @@ class GlitchEffect(abc.ABC):
     def __init__(self):
         # Initialize with default parameter values
         self.params = {name: details["default"] for name, details in self.parameters.items()}
+        print(f"[BaseEffect] Initialized with params: {self.params}")
     
     def set_param(self, name: str, value: Any) -> None:
         """Set a parameter value with type safety"""
+        print(f"\n[BaseEffect] set_param called with name={name}, value={value}")
+        print(f"[BaseEffect] Current params before change: {self.params}")
+        
         if name in self.params:
             expected_type = self.parameters[name]["type"]
 
@@ -45,11 +50,21 @@ class GlitchEffect(abc.ABC):
                 elif expected_type == str:
                     self.params[name] = str(value)
                 elif expected_type == "choice":
-                    self.params[name] = str(value)  # choices are string values
+                    print(f"[BaseEffect] Processing choice parameter {name}")
+                    print(f"[BaseEffect] Value before conversion: {value}")
+                    value = str(value)
+                    print(f"[BaseEffect] Value after conversion: {value}")
+                    if "options" in self.parameters[name] and value not in self.parameters[name]["options"]:
+                        print(f"[BaseEffect] Warning: Invalid value {value} for {name}. Must be one of {self.parameters[name]['options']}")
+                        return
+                    self.params[name] = value
+                    print(f"[BaseEffect] Successfully set {name} to {value}")
                 else:
                     self.params[name] = value  # fallback
+                    
+                print(f"[BaseEffect] Params after change: {self.params}")
             except Exception as e:
-                print(f"[WARNING] Failed to cast {name} to {expected_type}: {e}")
+                print(f"[BaseEffect] Failed to cast {name} to {expected_type}: {e}")
         
     def get_params(self) -> Dict[str, Any]:
         """Get all parameters"""
@@ -134,13 +149,16 @@ class PluginManager:
             if not os.path.exists(plugin_dir):
                 os.makedirs(plugin_dir)
             
+            # Add the plugin directory to Python path
+            if plugin_dir not in sys.path:
+                sys.path.append(plugin_dir)
+            
             for filename in os.listdir(plugin_dir):
                 if filename.endswith(".py") and not filename.startswith("_"):
                     module_name = filename[:-3]  # Remove .py extension
                     try:
                         # Import the module
-                        module_path = f"{plugin_dir}.{module_name}"
-                        module = importlib.import_module(module_path)
+                        module = importlib.import_module(module_name)
                         
                         # Find all GlitchEffect subclasses in the module
                         for _, obj in inspect.getmembers(module):
@@ -788,16 +806,34 @@ class VideoGlitchGUI:
 
             elif param_type == "choice":
                 var = tk.StringVar(value=param_value)
+                
+                # Default to combobox
                 combobox = ttk.Combobox(frame, textvariable=var, values=param_details["options"], state="readonly")
                 combobox.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
 
                 def update_param(name=param_name, var=var):
                     val = var.get()
-                    effect.set_param(name, val)
-                    update_label(val)
-                    self._update_preview()
+                    print(f"\n[UI] Combobox value changed for {name} to {val}")
+                    print(f"[UI] Current effect params before change: {effect.params}")
+                    # Ensure the value is a string and is in the options list
+                    if val in param_details["options"]:
+                        print(f"[UI] Setting {name} to {val} (valid option)")
+                        effect.set_param(name, val)
+                        update_label(val)
+                        print(f"[UI] Effect params after change: {effect.params}")
+                        # Force immediate preview update when blend mode changes
+                        if name in ["exclusion_blend_mode", "rgb_blend_mode"]:
+                            print(f"[UI] Forcing preview update for blend mode change")
+                            self._update_preview()
+                            self.root.update_idletasks()  # Force UI update
+                    else:
+                        print(f"[UI] Warning: Invalid value {val} for {name}. Must be one of {param_details['options']}")
 
+                # Bind both selection and focus out events to ensure the value is updated
                 combobox.bind("<<ComboboxSelected>>", lambda e: update_param())
+                combobox.bind("<FocusOut>", lambda e: update_param())
+                # Also bind to variable changes
+                var.trace_add("write", lambda *args: update_param())
 
     def _on_window_close(self):
         """Handle window closing"""

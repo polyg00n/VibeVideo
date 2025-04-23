@@ -18,7 +18,8 @@ class GlitchEffect(abc.ABC):
     def set_param(self, name: str, value: Any) -> None:
         """Set a parameter value with type safety"""
         if name in self.params:
-            expected_type = self.parameters[name]["type"]
+            param_details = self.parameters[name]
+            expected_type = param_details["type"]
 
             try:
                 # Auto-cast value to expected type
@@ -31,7 +32,12 @@ class GlitchEffect(abc.ABC):
                 elif expected_type == str:
                     self.params[name] = str(value)
                 elif expected_type == "choice":
-                    self.params[name] = str(value)  # choices are string values
+                    # For choice parameters, validate against options
+                    value = str(value)
+                    if "options" in param_details and value not in param_details["options"]:
+                        print(f"[WARNING] Invalid choice value for {name}: {value}. Must be one of {param_details['options']}")
+                        return
+                    self.params[name] = value
                 else:
                     self.params[name] = value  # fallback
             except Exception as e:
