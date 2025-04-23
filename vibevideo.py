@@ -585,11 +585,33 @@ class VideoGlitchGUI:
         dialog.transient(self.root)
         dialog.grab_set()
         
-        ttk.Label(dialog, text="Select effect type:").pack(pady=10)
+        # Set minimum size
+        dialog.minsize(400, 300)
+        
+        # Create main frame with padding
+        main_frame = ttk.Frame(dialog, padding="10")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        ttk.Label(main_frame, text="Select effect type:").pack(pady=10)
+        
+        # Create frame for listbox and scrollbar
+        list_frame = ttk.Frame(main_frame)
+        list_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+        
+        # Add scrollbar
+        scrollbar = ttk.Scrollbar(list_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
         effect_var = tk.StringVar()
-        effect_listbox = tk.Listbox(dialog, width=40, height=10)
-        effect_listbox.pack(pady=5, padx=10, fill=tk.BOTH, expand=True)
+        effect_listbox = tk.Listbox(
+            list_frame,
+            width=50,
+            height=15,
+            font=('TkDefaultFont', 10),
+            yscrollcommand=scrollbar.set
+        )
+        effect_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.config(command=effect_listbox.yview)
         
         # Get available effects
         effect_classes = self.plugin_manager.get_effect_classes()
@@ -621,7 +643,12 @@ class VideoGlitchGUI:
                 
                 dialog.destroy()
         
-        ttk.Button(dialog, text="Add", command=on_select).pack(pady=10)
+        # Create button frame
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill=tk.X, pady=10)
+        
+        ttk.Button(button_frame, text="Add", command=on_select).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side=tk.RIGHT, padx=5)
     
     def _remove_effect(self):
         """Remove selected effect"""
