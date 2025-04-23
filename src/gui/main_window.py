@@ -5,8 +5,9 @@ import tkinter as tk
 from tkinter import ttk, filedialog
 import os
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
 from pathlib import Path
+import time
 
 from .preview import VideoPreview
 from ..core.processor import VideoProcessor
@@ -26,6 +27,15 @@ class MainWindow:
         
         # Setup logging
         self._setup_logging()
+        
+        # Performance optimizations
+        self._param_controls_cache = {}  # Cache for parameter controls
+        self._last_frame_index = -1      # Track last processed frame
+        self._last_processed_frame = None # Cache last processed frame
+        self._update_timer = None        # For debouncing parameter updates
+        self._is_updating = False        # Prevent concurrent updates
+        self._last_preview_time = 0      # Track preview update timing
+        self._preview_update_interval = 1/30  # Target 30 FPS
         
         # Build UI
         self._build_ui()
@@ -241,18 +251,38 @@ class MainWindow:
     
     def _update_preview(self):
         """Update the preview with current frame"""
-        if not self.processor.source_path:
+        if not self.processor.source_path or self._is_updating:
             return
             
         try:
+            self._is_updating = True
+            
+            # Check if we need to update
+            current_time = time.time()
+            if current_time - self._last_preview_time < self._preview_update_interval:
+                return
+                
             ret, frame = self.processor.get_frame(self.current_frame_index)
             if ret:
-                processed = self.processor.process_frame(frame, self.current_frame_index)
+                # Check if we can use cached frame
+                if (self._last_frame_index == self.current_frame_index and 
+                    self._last_processed_frame is not None):
+                    processed = self._last_processed_frame
+                else:
+                    processed = self.processor.process_frame(frame, self.current_frame_index)
+                    self._last_processed_frame = processed
+                    self._last_frame_index = self.current_frame_index
+                
                 self.preview.update_frame(processed)
                 self.frame_label.config(text=f"{self.current_frame_index + 1} / {self.processor.frame_count}")
+                
+                self._last_preview_time = current_time
+                
         except Exception as e:
             self._logger.error(f"Preview update error: {e}")
             self._stop_playback()
+        finally:
+            self._is_updating = False
     
     def _on_frame_slider_change(self, value):
         """Handle frame slider change"""
@@ -347,23 +377,48 @@ class MainWindow:
             self.effects_list.insert("", tk.END, values=(effect.name,))
     
     def _on_effect_selected(self, event):
-        """Handle effect selection"""
+        """Handle effect selection with optimized UI updates"""
         selection = self.effects_list.selection()
         if not selection:
             return
 
-        # Clear current parameters UI
-        for widget in self.params_frame.winfo_children():
-            widget.destroy()
-
         # Get selected effect
         index = self.effects_list.index(selection[0])
         effect = self.processor.effect_chain.effects[index]
+        effect_type = effect.__class__.__name__
 
-        # Create parameters UI
+        # Temporarily disable updates for smoother UI
+        self.root.update_idletasks()
+        self.root.withdraw()
+
+        try:
+            # Clear current parameters UI
+            for widget in self.params_frame.winfo_children():
+                widget.destroy()
+
+            # Check cache for existing controls
+            if effect_type in self._param_controls_cache:
+                # Show cached controls
+                for widget in self._param_controls_cache[effect_type]:
+                    widget.pack()
+            else:
+                # Create and cache new controls
+                controls = self._create_parameter_controls(effect)
+                self._param_controls_cache[effect_type] = controls
+
+        finally:
+            # Re-enable updates
+            self.root.deiconify()
+            self.root.update_idletasks()
+
+    def _create_parameter_controls(self, effect):
+        """Create parameter controls with optimized updates"""
+        controls = []
+        
         for param_name, param_details in effect.parameters.items():
             frame = ttk.Frame(self.params_frame)
             frame.pack(fill=tk.X, pady=4)
+            controls.append(frame)
 
             ttk.Label(frame, text=f"{param_name}:").pack(side=tk.LEFT)
 
@@ -382,7 +437,7 @@ class MainWindow:
             def reset_param():
                 effect.set_param(param_name, default_value)
                 value_var.set(str(default_value))
-                self._update_preview()
+                self._debounced_update_preview()
                 self._on_effect_selected(None)
 
             ttk.Button(frame, text="⟲", width=2, command=reset_param).pack(side=tk.RIGHT)
@@ -392,11 +447,9 @@ class MainWindow:
 
                 # Special handling for blend mode parameter
                 if param_name in ["rgb_blend_mode", "exclusion_blend_mode"]:
-                    # Create a frame for the slider and label
                     slider_frame = ttk.Frame(frame)
                     slider_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
                     
-                    # Create the slider
                     slider = ttk.Scale(
                         slider_frame,
                         from_=param_details.min,
@@ -407,11 +460,9 @@ class MainWindow:
                     )
                     slider.pack(side=tk.LEFT, fill=tk.X, expand=True)
                     
-                    # Create a label to show the current blend mode name
                     blend_mode_label = ttk.Label(slider_frame, text="")
                     blend_mode_label.pack(side=tk.LEFT, padx=5)
                     
-                    # Update the label with the current blend mode name
                     def update_blend_mode_label():
                         if hasattr(effect, 'BLEND_MODES'):
                             mode_index = int(var.get())
@@ -437,53 +488,45 @@ class MainWindow:
                             val = int(val)
                         effect.set_param(name, val)
                         update_label(val)
-                        self._update_preview()
+                        self._debounced_update_preview()
 
                     var.trace_add("write", update_param)
 
             elif param_type == bool:
                 var = tk.BooleanVar(value=param_value)
-
                 checkbox = ttk.Checkbutton(frame, variable=var)
                 checkbox.pack(side=tk.LEFT, padx=5)
 
                 def update_param(*_, name=param_name, var=var):
                     effect.set_param(name, var.get())
                     update_label(var.get())
-                    self._update_preview()
+                    self._debounced_update_preview()
 
                 var.trace_add("write", update_param)
 
             elif param_type == str:
                 var = tk.StringVar(value=param_value)
-
                 entry = ttk.Entry(frame, textvariable=var)
                 entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
 
                 def update_param(*_, name=param_name, var=var):
                     effect.set_param(name, var.get())
                     update_label(var.get())
-                    self._update_preview()
+                    self._debounced_update_preview()
 
                 var.trace_add("write", update_param)
 
-            elif param_type == "choice":
-                var = tk.StringVar(value=param_value)
-                combobox = ttk.Combobox(frame, textvariable=var, values=param_details.options, state="readonly")
-                combobox.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        return controls
 
-                def update_param(name=param_name, var=var):
-                    val = var.get()
-                    effect.set_param(name, val)
-                    update_label(val)
-                    self._update_preview()
+    def _debounced_update_preview(self):
+        """Update preview with debouncing"""
+        if self._update_timer:
+            self.root.after_cancel(self._update_timer)
+        self._update_timer = self.root.after(100, self._update_preview)
 
-                combobox.bind("<<ComboboxSelected>>", lambda e: update_param())
-    
     def _on_blend_mode_change(self, param_name: str, var: tk.DoubleVar):
-        """Handle blend mode slider changes"""
+        """Handle blend mode slider changes with debouncing"""
         try:
-            # Get the effect that owns this parameter
             selection = self.effects_list.selection()
             if not selection:
                 return
@@ -491,12 +534,10 @@ class MainWindow:
             index = self.effects_list.index(selection[0])
             effect = self.processor.effect_chain.effects[index]
             
-            # Update the parameter
             value = int(var.get())
             effect.set_param(param_name, value)
             
-            # Update the preview
-            self._update_preview()
+            self._debounced_update_preview()
         except Exception as e:
             print(f"Error updating blend mode: {e}")
     

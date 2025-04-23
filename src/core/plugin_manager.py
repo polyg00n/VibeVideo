@@ -7,6 +7,7 @@ import inspect
 from typing import Dict, Type, List, Optional
 import logging
 from pathlib import Path
+import sys
 from .effects import GlitchEffect
 
 class PluginManager:
@@ -27,6 +28,10 @@ class PluginManager:
             # Convert to Path object for better handling
             plugin_path = Path(plugin_dir)
             
+            # Add plugin directory to Python path if not already there
+            if str(plugin_path.absolute()) not in sys.path:
+                sys.path.append(str(plugin_path.absolute()))
+            
             # Create __init__.py if it doesn't exist
             init_file = plugin_path / "__init__.py"
             if not init_file.exists():
@@ -39,7 +44,8 @@ class PluginManager:
                     
                 try:
                     # Import the module
-                    module_name = f"{plugin_dir}.{file.stem}"
+                    module_name = file.stem
+                    self._logger.debug(f"Attempting to import module: {module_name}")
                     module = importlib.import_module(module_name)
                     
                     # Find all GlitchEffect subclasses
@@ -51,6 +57,7 @@ class PluginManager:
                             
                 except Exception as e:
                     self._logger.error(f"Error loading plugin {file.name}: {e}")
+                    self._logger.error(f"Error details: {str(e)}")
     
     def register_effect(self, effect_class: Type[GlitchEffect]) -> None:
         """Register a new effect class"""
