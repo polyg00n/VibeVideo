@@ -19,6 +19,15 @@ class RGBChordSequencerEffect(GlitchEffect):
     
     name = "RGB Chord Sequencer"
     description = "Generate musical chords from RGB block data"
+    
+    # Define note duration mapping
+    NOTE_DURATIONS = {
+        0: "1/4",  # Quarter note
+        1: "1/8",  # Eighth note
+        2: "1/16", # Sixteenth note
+        3: "1/32"  # Thirty-second note
+    }
+    
     parameters = {
         "horizontal_divisions": {
             "type": int,
@@ -34,9 +43,14 @@ class RGBChordSequencerEffect(GlitchEffect):
         },
         "tempo": {"type": int, "min": 60, "max": 240, "default": 120},
         "volume": {"type": float, "min": 0.0, "max": 1.0, "default": 0.3},
-        "note_duration": {"type": "choice", 
-                         "options": ["1/4", "1/8", "1/16", "1/32"],
-                         "default": "1/4"},
+        "note_duration": {
+            "type": int,
+            "min": 0,
+            "max": len(NOTE_DURATIONS) - 1,
+            "default": 0,  # Default to quarter note
+            "label": "Note Duration",
+            "description": "Select the duration of each note"
+        },
         "save_audio": {"type": bool, "default": False}
     }
 
@@ -74,14 +88,38 @@ class RGBChordSequencerEffect(GlitchEffect):
 
     def set_param(self, name: str, value: Any) -> None:
         """Override set_param to handle parameter changes"""
-        super().set_param(name, value)
+        print(f"\n[RGBChord] set_param called with name={name}, value={value}")
+        print(f"[RGBChord] Current params before change: {self.params}")
         
-        # Store current frame if we need to redraw
-        if name in ["horizontal_divisions", "vertical_divisions"] and self.current_frame is not None:
-            # Force redraw by processing current frame again
-            self.process_frame(self.current_frame.copy())
-            # Regenerate audio if save_audio is enabled
-            self._regenerate_audio()
+        if name in self.params:
+            expected_type = self.parameters[name]["type"]
+
+            try:
+                # Auto-cast value to expected type
+                if expected_type == int:
+                    value = int(value)
+                    # For note duration, ensure it's within valid range
+                    if name == "note_duration":
+                        value = max(0, min(value, len(self.NOTE_DURATIONS) - 1))
+                        print(f"[RGBChord] Note duration index changed to: {value} ({self.NOTE_DURATIONS[value]})")
+                    self.params[name] = value
+                elif expected_type == float:
+                    self.params[name] = float(value)
+                elif expected_type == bool:
+                    self.params[name] = bool(value)
+                else:
+                    self.params[name] = value  # fallback
+                    
+                print(f"[RGBChord] Params after change: {self.params}")
+                
+                # Store current frame if we need to redraw
+                if name in ["horizontal_divisions", "vertical_divisions"] and self.current_frame is not None:
+                    # Force redraw by processing current frame again
+                    self.process_frame(self.current_frame.copy())
+                    # Regenerate audio if save_audio is enabled
+                    self._regenerate_audio()
+            except Exception as e:
+                print(f"[WARNING] Failed to cast {name} to {expected_type}: {e}")
 
     def _get_midi_note(self, rgb_value, channel):
         """Convert RGB value to MIDI note number"""
@@ -90,8 +128,8 @@ class RGBChordSequencerEffect(GlitchEffect):
         return self.base_midi_note + note_idx
 
     def _get_note_duration_value(self):
-        """Convert note duration fraction to float"""
-        duration_str = self.params["note_duration"]
+        """Convert note duration index to float"""
+        duration_str = self.NOTE_DURATIONS[self.params["note_duration"]]
         numerator, denominator = map(int, duration_str.split('/'))
         return numerator / denominator
 
@@ -305,7 +343,7 @@ class RGBChordSequencerEffect(GlitchEffect):
                    f"Divisions: {h_div}x{v_div}", 
                    (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
         cv2.putText(overlay,
-                   f"Note: {self.params['note_duration']}", 
+                   f"Note: {self.NOTE_DURATIONS[self.params['note_duration']]}", 
                    (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
         
         # Blend the overlay with the original frame
