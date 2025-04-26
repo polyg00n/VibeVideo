@@ -20,7 +20,7 @@ class PFrameInsertEffect(GlitchEffect):
     """Inserts P-frames from a reference video into the main video"""
     
     name = "P-Frame Insert"
-    description = "Inserts P-frames from a reference video into the main video"
+    description = "BROKEN -Inserts P-frames from a reference video into the main video"
     
     # ===== Parameters =====
     # reference_video: Path to the video whose P-frames will be used
